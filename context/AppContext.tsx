@@ -1,9 +1,29 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Product, Sale, Notification, CartItem } from '../types';
+import { auth, db } from '../firebase';
+import { 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged, 
+  User 
+} from "firebase/auth";
+import { 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  writeBatch, 
+  query, 
+  orderBy,
+  increment
+} from "firebase/firestore";
 
 interface AppContextType {
+  user: User | null;
   isAuthenticated: boolean;
-  login: () => void;
+  login: (email: string, pass: string) => Promise<void>;
   logout: () => void;
   products: Product[];
   sales: Sale[];
@@ -13,9 +33,9 @@ interface AppContextType {
   updateProduct: (product: Product) => void;
   deleteProduct: (id: string) => void;
   addCategory: (category: string) => void;
-  processSale: (items: CartItem[], customerMobile?: string, customerName?: string, customerEmail?: string, includeGST?: boolean, discountPercentage?: number) => Sale;
-  updateSale: (updatedSale: Sale) => void;
-  deleteSale: (saleId: string) => void;
+  processSale: (items: CartItem[], customerMobile?: string, customerName?: string, customerEmail?: string, includeGST?: boolean, discountPercentage?: number) => Promise<Sale | null>;
+  updateSale: (updatedSale: Sale) => Promise<void>;
+  deleteSale: (saleId: string) => Promise<void>;
   resetSystem: () => void;
   removeNotification: (id: string) => void;
   markNotificationRead: (id: string) => void;
@@ -23,64 +43,73 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Default Categories
+// Default Categories (fallback)
 const INITIAL_CATEGORIES = ['Syrup', 'Tablet/Medicine', 'Lotion', 'Cosmetics', 'Sanitary Pad', 'Others'];
 
-// Dummy Initial Data
-const INITIAL_PRODUCTS: Product[] = [
-  { id: '1', name: 'Paracetamol 500mg', category: 'Tablet/Medicine', batch: 'B101', expiryDate: '2026-12-31', buyPrice: 1.5, sellPrice: 5, stock: 150, location: 'Rack A1', vendor: 'MedLife Distributors' },
-  { id: '2', name: 'Amoxicillin 250mg', category: 'Tablet/Medicine', batch: 'B102', expiryDate: '2024-05-20', buyPrice: 8, sellPrice: 15, stock: 45, location: 'Rack A2', vendor: 'Global Pharma' },
-  { id: '3', name: 'Cough Syrup', category: 'Syrup', batch: 'B103', expiryDate: '2025-08-15', buyPrice: 40, sellPrice: 85, stock: 8, location: 'Shelf B', vendor: 'Wellness Inc' },
-];
-
 export const AppProvider = ({ children }: { children?: ReactNode }) => {
-  // --- Persistence Logic ---
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('auth_token') === 'true';
-  });
-
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem('products');
-      return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-    } catch (e) {
-      return INITIAL_PRODUCTS;
-    }
-  });
-
-  const [sales, setSales] = useState<Sale[]>(() => {
-    try {
-      const saved = localStorage.getItem('sales');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-
-  const [categories, setCategories] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('categories');
-      return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
-    } catch (e) {
-      return INITIAL_CATEGORIES;
-    }
-  });
-
+  const [user, setUser] = useState<User | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  // Save to LocalStorage whenever data changes
-  useEffect(() => { localStorage.setItem('products', JSON.stringify(products)); }, [products]);
-  useEffect(() => { localStorage.setItem('sales', JSON.stringify(sales)); }, [sales]);
-  useEffect(() => { localStorage.setItem('categories', JSON.stringify(categories)); }, [categories]);
-  
-  useEffect(() => { 
-    if(isAuthenticated) localStorage.setItem('auth_token', 'true'); 
-    else localStorage.removeItem('auth_token');
-  }, [isAuthenticated]);
+  // 1. Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
-  const login = () => setIsAuthenticated(true);
-  const logout = () => setIsAuthenticated(false);
+  // 2. Data Listeners (Real-time Sync) - Only run if logged in
+  useEffect(() => {
+    if (!user) {
+      setProducts([]);
+      setSales([]);
+      return;
+    }
 
+    // Products Listener (Inventory)
+    const unsubProducts = onSnapshot(collection(db, "products"), (snapshot) => {
+      const prodList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setProducts(prodList);
+    }, (error) => console.error("Products sync error:", error));
+
+    // Sales Listener (Bills & Stats)
+    const qSales = query(collection(db, "sales"), orderBy("timestamp", "desc"));
+    const unsubSales = onSnapshot(qSales, (snapshot) => {
+      const saleList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
+      setSales(saleList);
+    }, (error) => console.error("Sales sync error:", error));
+
+    // Categories Listener
+    const unsubCategories = onSnapshot(collection(db, "categories"), (snapshot) => {
+      const cats = snapshot.docs.map(doc => doc.data().name as string);
+      if(cats.length > 0) setCategories(cats);
+      else setCategories(INITIAL_CATEGORIES);
+    });
+
+    return () => {
+      unsubProducts();
+      unsubSales();
+      unsubCategories();
+    };
+  }, [user]);
+
+  // --- Auth Actions ---
+  const login = async (email: string, pass: string) => {
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+      addNotification("Welcome back to Cloud Dashboard", "info");
+    } catch (error: any) {
+      addNotification("Login Failed: " + error.message, "alert");
+      throw error;
+    }
+  };
+
+  const logout = () => signOut(auth);
+
+  // --- Notifications ---
   const addNotification = (message: string, type: 'info' | 'warning' | 'alert') => {
     const id = Date.now().toString() + Math.random();
     const newNotif: Notification = { id, message, type, timestamp: Date.now(), read: false };
@@ -91,31 +120,36 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const removeNotification = (id: string) => setNotifications(prev => prev.filter(n => n.id !== id));
   const markNotificationRead = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
 
-  // --- CRUD Operations ---
+  // --- Inventory Actions (Cloud) ---
 
-  const addCategory = (category: string) => {
+  const addCategory = async (category: string) => {
     if (!categories.includes(category)) {
-      setCategories(prev => [...prev, category]);
-      addNotification(`Category '${category}' created`, 'info');
+      await addDoc(collection(db, "categories"), { name: category });
+      addNotification(`Category '${category}' synced`, 'info');
     }
   };
 
-  const addProduct = (product: Product) => {
-    setProducts(prev => [...prev, product]);
-    addNotification(`Product added: ${product.name}`, 'info');
+  const addProduct = async (product: Product) => {
+    // We let Firestore generate the ID or use the one provided if strictly needed
+    const { id, ...data } = product; 
+    await addDoc(collection(db, "products"), data);
+    addNotification(`Product added to Cloud: ${product.name}`, 'info');
   };
 
-  const updateProduct = (updatedProduct: Product) => {
-    setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+  const updateProduct = async (updatedProduct: Product) => {
+    const productRef = doc(db, "products", updatedProduct.id);
+    await updateDoc(productRef, { ...updatedProduct });
     addNotification(`Product updated: ${updatedProduct.name}`, 'info');
   };
 
-  const deleteProduct = (id: string) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
+  const deleteProduct = async (id: string) => {
+    await deleteDoc(doc(db, "products", id));
     addNotification('Product deleted from inventory', 'warning');
   };
 
-  const processSale = (
+  // --- Billing Logic (Atomic Transactions) ---
+
+  const processSale = async (
     items: CartItem[], 
     customerMobile?: string,
     customerName?: string, 
@@ -123,143 +157,114 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     includeGST: boolean = false,
     discountPercentage: number = 0
   ) => {
-    let saleProfit = 0;
-    let subTotal = 0;
+    try {
+      // 1. Calculations
+      let saleProfit = 0;
+      let subTotal = 0;
 
-    const updatedProducts = products.map(product => {
-      const soldItem = items.find(item => item.id === product.id);
-      if (soldItem) {
-        // Calculate effective sell price after item-level discount
-        let effectiveSellPrice = soldItem.sellPrice;
-        if(soldItem.itemDiscountValue > 0) {
-            if(soldItem.itemDiscountType === 'PERCENT') {
-                effectiveSellPrice = soldItem.sellPrice - (soldItem.sellPrice * soldItem.itemDiscountValue / 100);
+      items.forEach(item => {
+        let effectiveSellPrice = item.sellPrice;
+        if(item.itemDiscountValue > 0) {
+            if(item.itemDiscountType === 'PERCENT') {
+                effectiveSellPrice = item.sellPrice - (item.sellPrice * item.itemDiscountValue / 100);
             } else {
-                effectiveSellPrice = soldItem.sellPrice - soldItem.itemDiscountValue;
+                effectiveSellPrice = item.sellPrice - item.itemDiscountValue;
             }
         }
-        
-        const profitPerUnit = effectiveSellPrice - soldItem.buyPrice;
-        saleProfit += profitPerUnit * soldItem.quantity;
-        subTotal += effectiveSellPrice * soldItem.quantity;
-        
-        const newStock = product.stock - soldItem.quantity;
-        if (newStock < 10) addNotification(`Alert: ${product.name} running low (${newStock})`, 'warning');
-        return { ...product, stock: newStock };
-      }
-      return product;
-    });
+        const profitPerUnit = effectiveSellPrice - item.buyPrice;
+        saleProfit += profitPerUnit * item.quantity;
+        subTotal += effectiveSellPrice * item.quantity;
+      });
 
-    setProducts(updatedProducts);
+      const gstAmount = includeGST ? subTotal * 0.18 : 0;
+      const grossTotal = subTotal + gstAmount;
+      const discountAmount = (grossTotal * discountPercentage) / 100;
+      const finalTotal = grossTotal - discountAmount;
+      saleProfit = saleProfit - discountAmount;
 
-    const gstAmount = includeGST ? subTotal * 0.18 : 0;
-    const grossTotal = subTotal + gstAmount;
-    
-    // Global Discount
-    const discountAmount = (grossTotal * discountPercentage) / 100;
-    const finalTotal = grossTotal - discountAmount;
-    
-    saleProfit = saleProfit - discountAmount;
+      const newSaleData = {
+        items, subTotal, gstAmount, discountPercentage, discountAmount,
+        totalAmount: finalTotal, totalProfit: saleProfit,
+        timestamp: Date.now(), customerName: customerName || '', customerEmail: customerEmail || '', customerMobile: customerMobile || ''
+      };
 
-    const newSale: Sale = {
-      id: Date.now().toString(),
-      items, subTotal, gstAmount, discountPercentage, discountAmount,
-      totalAmount: finalTotal, totalProfit: saleProfit,
-      timestamp: Date.now(), customerName, customerEmail, customerMobile
-    };
+      // 2. Atomic Batch Write (Sale + Inventory Deduct)
+      const batch = writeBatch(db);
 
-    setSales(prev => [newSale, ...prev]);
-    addNotification(`Bill generated. Total: ₹${finalTotal.toFixed(2)}`, 'info');
-    return newSale;
+      // A. Create Sale Doc
+      const newSaleRef = doc(collection(db, "sales"));
+      batch.set(newSaleRef, newSaleData);
+
+      // B. Deduct Inventory
+      items.forEach(item => {
+        const productRef = doc(db, "products", item.id);
+        batch.update(productRef, {
+          stock: increment(-item.quantity)
+        });
+      });
+
+      await batch.commit();
+      addNotification(`Cloud Bill Generated: ₹${finalTotal.toFixed(2)}`, 'info');
+      
+      // Return constructed sale object with ID for UI
+      return { id: newSaleRef.id, ...newSaleData } as Sale;
+
+    } catch (e: any) {
+      console.error(e);
+      addNotification("Transaction Failed: " + e.message, "alert");
+      return null;
+    }
   };
 
-  const updateSale = (updatedSale: Sale) => {
-    const oldSale = sales.find(s => s.id === updatedSale.id);
-    if (!oldSale) return;
+  // --- Smart Delete (Rollback) ---
+  const deleteSale = async (saleId: string) => {
+    try {
+      const saleToDelete = sales.find(s => s.id === saleId);
+      if (!saleToDelete) return;
 
-    let tempProducts = [...products];
-    // Revert Old Stock
-    oldSale.items.forEach(oldItem => {
-        const pIndex = tempProducts.findIndex(p => p.id === oldItem.id);
-        if(pIndex > -1) tempProducts[pIndex] = { ...tempProducts[pIndex], stock: tempProducts[pIndex].stock + oldItem.quantity };
-    });
+      const batch = writeBatch(db);
 
-    let newSaleProfit = 0;
-    let newSubTotal = 0;
+      // 1. Restore Stock (Rollback)
+      saleToDelete.items.forEach(item => {
+        const productRef = doc(db, "products", item.id);
+        batch.update(productRef, {
+          stock: increment(item.quantity)
+        });
+      });
 
-    // Apply New Stock
-    updatedSale.items.forEach(newItem => {
-        const pIndex = tempProducts.findIndex(p => p.id === newItem.id);
-        if(pIndex > -1) {
-             const product = tempProducts[pIndex];
-             tempProducts[pIndex] = { ...product, stock: product.stock - newItem.quantity };
-             
-             // Recalculate based on item discount
-             let effectiveSellPrice = newItem.sellPrice;
-             if(newItem.itemDiscountValue > 0) {
-                if(newItem.itemDiscountType === 'PERCENT') {
-                    effectiveSellPrice = newItem.sellPrice - (newItem.sellPrice * newItem.itemDiscountValue / 100);
-                } else {
-                    effectiveSellPrice = newItem.sellPrice - newItem.itemDiscountValue;
-                }
-             }
+      // 2. Delete Sale Record (Updates Stats via onSnapshot automatically)
+      const saleRef = doc(db, "sales", saleId);
+      batch.delete(saleRef);
 
-             newSaleProfit += (effectiveSellPrice - product.buyPrice) * newItem.quantity;
-             newSubTotal += effectiveSellPrice * newItem.quantity;
-        }
-    });
+      await batch.commit();
+      addNotification(`Sale #${saleId.slice(-4)} deleted. Stock Restored.`, 'alert');
 
-    const hasGST = oldSale.gstAmount > 0;
-    const newGstAmount = hasGST ? newSubTotal * 0.18 : 0;
-    const grossTotal = newSubTotal + newGstAmount;
-    
-    const discPct = updatedSale.discountPercentage || 0;
-    const newDiscountAmount = (grossTotal * discPct) / 100;
-    const newTotalAmount = grossTotal - newDiscountAmount;
-    
-    newSaleProfit = newSaleProfit - newDiscountAmount;
-
-    const finalSale: Sale = {
-        ...updatedSale,
-        subTotal: newSubTotal,
-        gstAmount: newGstAmount,
-        discountAmount: newDiscountAmount,
-        totalAmount: newTotalAmount,
-        totalProfit: newSaleProfit
-    };
-
-    setProducts(tempProducts);
-    setSales(prev => prev.map(s => s.id === updatedSale.id ? finalSale : s));
-    addNotification(`Sale #${updatedSale.id} updated successfully.`, 'info');
+    } catch (e: any) {
+      addNotification("Delete Failed: " + e.message, "alert");
+    }
   };
 
-  const deleteSale = (saleId: string) => {
-    const saleToDelete = sales.find(s => s.id === saleId);
-    if (!saleToDelete) return;
-
-    const updatedProducts = products.map(product => {
-        const itemInBill = saleToDelete.items.find(i => i.id === product.id);
-        if (itemInBill) return { ...product, stock: product.stock + itemInBill.quantity };
-        return product;
-    });
-    setProducts(updatedProducts);
-    setSales(prev => prev.filter(s => s.id !== saleId));
-    addNotification(`Sale #${saleId} deleted. Stock restored.`, 'alert');
+  const updateSale = async (updatedSale: Sale) => {
+     try {
+       const saleRef = doc(db, "sales", updatedSale.id);
+       await updateDoc(saleRef, {
+         customerName: updatedSale.customerName,
+         customerMobile: updatedSale.customerMobile,
+       });
+       addNotification("Sale Details Updated", "info");
+     } catch(e: any) {
+       addNotification("Update Failed", "alert");
+     }
   };
 
-  const resetSystem = () => {
-      setProducts([]); 
-      setSales([]);
-      setCategories(INITIAL_CATEGORIES);
-      localStorage.removeItem('products');
-      localStorage.removeItem('sales');
-      localStorage.removeItem('categories');
-      addNotification("System Reset Complete. All Data Cleared.", "alert");
+  const resetSystem = async () => {
+    alert("System Reset is disabled in Cloud Mode to prevent accidental data loss.");
   };
 
   return (
     <AppContext.Provider value={{
-      isAuthenticated, login, logout, products, sales, categories, notifications,
+      user, isAuthenticated: !!user, login, logout, 
+      products, sales, categories, notifications,
       addProduct, updateProduct, deleteProduct, addCategory,
       processSale, updateSale, deleteSale, resetSystem, removeNotification, markNotificationRead
     }}>

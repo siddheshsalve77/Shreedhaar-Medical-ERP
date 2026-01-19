@@ -105,9 +105,6 @@ const POS: React.FC = () => {
   const globalDiscountAmount = (grossTotal * globalDiscountRate) / 100;
   const grandTotal = grossTotal - globalDiscountAmount;
 
-  // Calculate Total Savings (MRP - Final Payable)
-  // Note: If GST is added, technically the "MRP Value" of the tax should be considered, 
-  // but for simplicity and customer happiness: Savings = (TotalMRP + GST) - GrandTotal
   const totalPotentialValue = totalMRP + gstAmount;
   const totalSavings = totalPotentialValue - grandTotal;
 
@@ -115,11 +112,14 @@ const POS: React.FC = () => {
     (p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.category.toLowerCase().includes(searchTerm.toLowerCase())) && searchTerm.length > 0
   );
 
-  const handleGenerateBill = () => {
+  const handleGenerateBill = async () => {
     if (cart.length === 0) return;
-    const savedSale = processSale(cart, customerMobile, customerName, customerEmail, includeGST, globalDiscountRate);
-    setLastSale(savedSale); setShowSuccessModal(true);
-    setCart([]); setCustomerName(''); setCustomerEmail(''); setCustomerMobile(''); setSearchTerm(''); setIncludeGST(false); setDiscountPercent('');
+    // processSale is now Async/Await because of Firebase
+    const savedSale = await processSale(cart, customerMobile, customerName, customerEmail, includeGST, globalDiscountRate);
+    if(savedSale) {
+        setLastSale(savedSale); setShowSuccessModal(true);
+        setCart([]); setCustomerName(''); setCustomerEmail(''); setCustomerMobile(''); setSearchTerm(''); setIncludeGST(false); setDiscountPercent('');
+    }
   };
 
   // --- Professional PDF Generation ---
@@ -137,9 +137,9 @@ const POS: React.FC = () => {
     doc.setFont("helvetica", "bold");
     doc.text("Shreedhar Medical", 14, 18);
     
+    // UPDATED ADDRESS BLOCK - MHADA COLONY
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    // UPDATED ADDRESS & PHONE HERE
     doc.text("Mhada Colony, Shrirampur", 14, 25);
     doc.text("Maharashtra - 413709 | Phone: 9822062809 / 9270262809", 14, 30);
     
@@ -162,13 +162,11 @@ const POS: React.FC = () => {
       startY: 68,
       head: [['Item Name', 'Batch', 'Exp', 'Qty', 'MRP', 'Disc', 'Net Amt']],
       body: lastSale.items.map(item => {
-        // Calculate Logic for Display
         let discDisplay = '-';
         if(item.itemDiscountValue > 0) {
              discDisplay = item.itemDiscountType === 'PERCENT' ? `${item.itemDiscountValue}%` : `${item.itemDiscountValue}`;
         }
         
-        // Calculate Net for this item row
         let effectivePrice = item.sellPrice;
         if(item.itemDiscountValue > 0) {
             if(item.itemDiscountType === 'PERCENT') effectivePrice = item.sellPrice * (1 - item.itemDiscountValue/100);
@@ -186,32 +184,29 @@ const POS: React.FC = () => {
         ];
       }),
       theme: 'grid',
-      headStyles: { fillColor: [22, 75, 96], textColor: 255 }, // Navy Header
+      headStyles: { fillColor: [22, 75, 96], textColor: 255 }, 
       styles: { fontSize: 9, cellPadding: 2 },
       columnStyles: {
-        0: { cellWidth: 50 }, // Name
-        4: { halign: 'right' }, // MRP
-        5: { halign: 'center' }, // Disc
-        6: { halign: 'right', fontStyle: 'bold' } // Net
+        0: { cellWidth: 50 }, 
+        4: { halign: 'right' }, 
+        5: { halign: 'center' }, 
+        6: { halign: 'right', fontStyle: 'bold' } 
       }
     });
 
     const finalY = (doc as any).lastAutoTable.finalY + 5;
 
     // 4. Totals Section & Footer
-    // Left Side: Terms
     doc.setFontSize(8);
     doc.setTextColor(100);
     doc.text("Terms & Conditions:", 14, finalY + 10);
     doc.text("1. Goods once sold will not be taken back.", 14, finalY + 15);
     doc.text("2. Please consult doctor before consuming.", 14, finalY + 20);
     
-    // Right Side: Totals
     let currentY = finalY + 5;
     const rightX = pageWidth - 60;
     const rightValueX = pageWidth - 14;
 
-    // Helper for right aligned text
     const addRow = (label: string, value: string, isBold = false) => {
         doc.setFont("helvetica", isBold ? "bold" : "normal");
         doc.setFontSize(isBold ? 11 : 10);
@@ -221,15 +216,12 @@ const POS: React.FC = () => {
         currentY += 6;
     };
 
-    // Calculate Total MRP for the PDF to show savings
     const pdfTotalMRP = lastSale.items.reduce((sum, i) => sum + (i.sellPrice * i.quantity), 0);
     
-    // Strikethrough Total MRP
     doc.setTextColor(150);
     doc.setFontSize(10);
     doc.text("Total MRP:", rightX, currentY);
     doc.text(`${pdfTotalMRP.toFixed(2)}`, rightValueX, currentY, { align: 'right' });
-    // Draw line through price
     const textWidth = doc.getTextWidth(`${pdfTotalMRP.toFixed(2)}`);
     doc.line(rightValueX - textWidth, currentY - 1, rightValueX, currentY - 1);
     currentY += 6;
@@ -240,13 +232,11 @@ const POS: React.FC = () => {
         addRow("Discount:", `- ${lastSale.discountAmount.toFixed(2)}`);
     }
 
-    // Grand Total Box
     doc.setFillColor(240, 240, 240);
     doc.rect(rightX - 2, currentY - 4, 60, 10, 'F');
     doc.setTextColor(0, 50, 0);
     addRow("Net Payable:", `${lastSale.totalAmount.toFixed(2)}`, true);
 
-    // Signature
     doc.setFontSize(9);
     doc.setTextColor(0,0,0);
     doc.text("Authorized Signatory", pageWidth - 14, finalY + 40, { align: 'right' });
@@ -279,9 +269,9 @@ const POS: React.FC = () => {
           </div>
         </div>
         
-        {/* Search Results */}
+        {/* Search Results - FIX: Added fixed positioning for mobile overlay */}
         {searchTerm.length > 0 && (
-            <div className="absolute top-[88px] left-0 w-full md:w-auto md:left-0 md:right-0 bg-white z-50 overflow-y-auto border-t border-gray-100 shadow-2xl p-2 md:max-h-[60vh] max-h-[50vh]">
+            <div className="absolute top-[88px] left-0 w-full md:w-auto md:left-0 md:right-0 bg-white z-[50] overflow-y-auto border-t border-gray-100 shadow-2xl p-2 md:max-h-[60vh] max-h-[50vh] inset-x-0">
                 {searchResults.map(product => (
                     <div key={product.id} className="flex items-center justify-between p-4 mb-2 bg-gray-50 rounded-lg hover:bg-teal-50 active:bg-teal-100 transition-colors cursor-pointer border border-gray-200 shadow-sm" onClick={() => addToCart(product)}>
                     <div>
