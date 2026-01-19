@@ -1,0 +1,7 @@
+{
+  "name": "Shreedhar Medical ERP",
+  "description": "A comprehensive Pharmacy ERP Web App with POS, Inventory Management, and Real-time Analytics.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
