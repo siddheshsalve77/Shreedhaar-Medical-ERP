@@ -1,4 +1,5 @@
-export type ProductCategory = 'Syrup' | 'Tablet/Medicine' | 'Lotion' | 'Cosmetics' | 'Sanitary Pad' | 'Others';
+
+export type ProductCategory = string;
 
 export interface Product {
   id: string;
@@ -10,6 +11,7 @@ export interface Product {
   sellPrice: number;
   stock: number;
   location: string;
+  image?: string; // Base64 string for product image
 }
 
 export interface CartItem extends Product {
@@ -20,7 +22,7 @@ export interface Sale {
   id: string;
   customerName?: string;
   customerEmail?: string;
-  customerMobile?: string; // Changed to Optional
+  customerMobile?: string;
   items: CartItem[];
   subTotal: number;
   gstAmount: number;
