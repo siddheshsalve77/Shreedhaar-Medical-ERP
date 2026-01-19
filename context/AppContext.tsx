@@ -26,11 +26,11 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // Default Categories
 const INITIAL_CATEGORIES = ['Syrup', 'Tablet/Medicine', 'Lotion', 'Cosmetics', 'Sanitary Pad', 'Others'];
 
-// Dummy Initial Data (Only used if localStorage is empty)
+// Dummy Initial Data
 const INITIAL_PRODUCTS: Product[] = [
-  { id: '1', name: 'Paracetamol 500mg', category: 'Tablet/Medicine', batch: 'B101', expiryDate: '2026-12-31', buyPrice: 1.5, sellPrice: 5, stock: 150, location: 'Rack A1' },
-  { id: '2', name: 'Amoxicillin 250mg', category: 'Tablet/Medicine', batch: 'B102', expiryDate: '2024-05-20', buyPrice: 8, sellPrice: 15, stock: 45, location: 'Rack A2' },
-  { id: '3', name: 'Cough Syrup', category: 'Syrup', batch: 'B103', expiryDate: '2025-08-15', buyPrice: 40, sellPrice: 85, stock: 8, location: 'Shelf B' },
+  { id: '1', name: 'Paracetamol 500mg', category: 'Tablet/Medicine', batch: 'B101', expiryDate: '2026-12-31', buyPrice: 1.5, sellPrice: 5, stock: 150, location: 'Rack A1', vendor: 'MedLife Distributors' },
+  { id: '2', name: 'Amoxicillin 250mg', category: 'Tablet/Medicine', batch: 'B102', expiryDate: '2024-05-20', buyPrice: 8, sellPrice: 15, stock: 45, location: 'Rack A2', vendor: 'Global Pharma' },
+  { id: '3', name: 'Cough Syrup', category: 'Syrup', batch: 'B103', expiryDate: '2025-08-15', buyPrice: 40, sellPrice: 85, stock: 8, location: 'Shelf B', vendor: 'Wellness Inc' },
 ];
 
 export const AppProvider = ({ children }: { children?: ReactNode }) => {
@@ -68,7 +68,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  // Save to LocalStorage whenever data changes (CRITICAL FIX for Persistence)
+  // Save to LocalStorage whenever data changes
   useEffect(() => { localStorage.setItem('products', JSON.stringify(products)); }, [products]);
   useEffect(() => { localStorage.setItem('sales', JSON.stringify(sales)); }, [sales]);
   useEffect(() => { localStorage.setItem('categories', JSON.stringify(categories)); }, [categories]);
@@ -77,15 +77,6 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     if(isAuthenticated) localStorage.setItem('auth_token', 'true'); 
     else localStorage.removeItem('auth_token');
   }, [isAuthenticated]);
-
-  // Check for low stock logic
-  useEffect(() => {
-    products.forEach(p => {
-      if (p.stock < 10) {
-         // distinct low stock check could go here
-      }
-    });
-  }, [products]);
 
   const login = () => setIsAuthenticated(true);
   const logout = () => setIsAuthenticated(false);
@@ -138,9 +129,20 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     const updatedProducts = products.map(product => {
       const soldItem = items.find(item => item.id === product.id);
       if (soldItem) {
-        const profitPerUnit = soldItem.sellPrice - soldItem.buyPrice;
+        // Calculate effective sell price after item-level discount
+        let effectiveSellPrice = soldItem.sellPrice;
+        if(soldItem.itemDiscountValue > 0) {
+            if(soldItem.itemDiscountType === 'PERCENT') {
+                effectiveSellPrice = soldItem.sellPrice - (soldItem.sellPrice * soldItem.itemDiscountValue / 100);
+            } else {
+                effectiveSellPrice = soldItem.sellPrice - soldItem.itemDiscountValue;
+            }
+        }
+        
+        const profitPerUnit = effectiveSellPrice - soldItem.buyPrice;
         saleProfit += profitPerUnit * soldItem.quantity;
-        subTotal += soldItem.sellPrice * soldItem.quantity;
+        subTotal += effectiveSellPrice * soldItem.quantity;
+        
         const newStock = product.stock - soldItem.quantity;
         if (newStock < 10) addNotification(`Alert: ${product.name} running low (${newStock})`, 'warning');
         return { ...product, stock: newStock };
@@ -153,11 +155,10 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     const gstAmount = includeGST ? subTotal * 0.18 : 0;
     const grossTotal = subTotal + gstAmount;
     
-    // Calculate Discount based on Gross Total
+    // Global Discount
     const discountAmount = (grossTotal * discountPercentage) / 100;
     const finalTotal = grossTotal - discountAmount;
     
-    // Adjust Profit: Subtract discount from profit since it reduces margin
     saleProfit = saleProfit - discountAmount;
 
     const newSale: Sale = {
@@ -192,16 +193,26 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
         if(pIndex > -1) {
              const product = tempProducts[pIndex];
              tempProducts[pIndex] = { ...product, stock: product.stock - newItem.quantity };
-             newSaleProfit += (newItem.sellPrice - product.buyPrice) * newItem.quantity;
+             
+             // Recalculate based on item discount
+             let effectiveSellPrice = newItem.sellPrice;
+             if(newItem.itemDiscountValue > 0) {
+                if(newItem.itemDiscountType === 'PERCENT') {
+                    effectiveSellPrice = newItem.sellPrice - (newItem.sellPrice * newItem.itemDiscountValue / 100);
+                } else {
+                    effectiveSellPrice = newItem.sellPrice - newItem.itemDiscountValue;
+                }
+             }
+
+             newSaleProfit += (effectiveSellPrice - product.buyPrice) * newItem.quantity;
+             newSubTotal += effectiveSellPrice * newItem.quantity;
         }
-        newSubTotal += newItem.sellPrice * newItem.quantity;
     });
 
     const hasGST = oldSale.gstAmount > 0;
     const newGstAmount = hasGST ? newSubTotal * 0.18 : 0;
     const grossTotal = newSubTotal + newGstAmount;
     
-    // Recalculate Discount
     const discPct = updatedSale.discountPercentage || 0;
     const newDiscountAmount = (grossTotal * discPct) / 100;
     const newTotalAmount = grossTotal - newDiscountAmount;

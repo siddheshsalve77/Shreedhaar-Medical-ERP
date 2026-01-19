@@ -15,7 +15,7 @@ const Inventory: React.FC = () => {
   // Form State
   const initialFormState: Product = {
     id: '', name: '', category: 'Tablet/Medicine', batch: '', expiryDate: '',
-    buyPrice: 0, sellPrice: 0, stock: 0, location: '', image: ''
+    buyPrice: 0, sellPrice: 0, stock: 0, location: '', image: '', vendor: ''
   };
   const [formData, setFormData] = useState<Product>(initialFormState);
   
@@ -72,13 +72,11 @@ const Inventory: React.FC = () => {
       // Basic Expiry Detection Regex
       const dateRegex = /(\d{2}[/-]\d{2}[/-]\d{4})|(\d{4}[/-]\d{2}[/-]\d{2})/;
       const dateMatch = text.match(dateRegex);
-      const detectedExpiry = dateMatch ? dateMatch[0] : ''; // Simplistic, might need formatting to YYYY-MM-DD for input
+      const detectedExpiry = dateMatch ? dateMatch[0] : ''; // Simplistic
 
       setFormData(prev => ({
         ...prev,
         name: detectedName || prev.name,
-        // Only set expiry if it matches YYYY-MM-DD or close, otherwise keep manual
-        // expiryDate: detectedExpiry || prev.expiryDate 
       }));
       if(detectedName) alert("OCR Scanned Name: " + detectedName);
     } catch (err) {
@@ -124,6 +122,7 @@ const Inventory: React.FC = () => {
             <tr>
               <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Product</th>
               <th className="hidden md:table-cell px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Category</th>
+              <th className="hidden md:table-cell px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Vendor</th>
               <th className="hidden md:table-cell px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Location</th>
               <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Stock</th>
               <th className="hidden md:table-cell px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Price</th>
@@ -149,6 +148,7 @@ const Inventory: React.FC = () => {
                       </div>
                   </td>
                   <td className="hidden md:table-cell px-6 py-4 text-gray-600"><span className="px-2 py-1 bg-gray-100 rounded text-xs">{product.category}</span></td>
+                  <td className="hidden md:table-cell px-6 py-4 text-gray-600 text-sm truncate max-w-[150px]">{product.vendor || '-'}</td>
                   <td className="hidden md:table-cell px-6 py-4 text-gray-600 text-sm">{product.location || '-'}</td>
                   <td className={`px-6 py-4 ${isLowStock ? 'text-red-600 font-bold' : 'text-gray-600'}`}>{product.stock}</td>
                   <td className="hidden md:table-cell px-6 py-4 text-gray-600">₹{product.sellPrice}</td>
@@ -235,6 +235,10 @@ const Inventory: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
                   <input required className="w-full p-2 border border-gray-300 rounded-lg focus:ring-teal-500 bg-white text-gray-900" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Vendor Name</label>
+                  <input className="w-full p-2 border border-gray-300 rounded-lg focus:ring-teal-500 bg-white text-gray-900" placeholder="e.g. MedLife Distributors" value={formData.vendor || ''} onChange={e => setFormData({...formData, vendor: e.target.value})} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>

@@ -25,19 +25,55 @@ const SalesHistory: React.FC = () => {
     const reprintBill = (sale: Sale, e: React.MouseEvent) => {
         e.stopPropagation();
         const doc = new jsPDF();
-        doc.setFontSize(22); doc.setTextColor(0, 128, 128); doc.text("Shreedhar Medical", 14, 20);
-        doc.setFontSize(10); doc.setTextColor(0, 0, 0);
-        doc.text(`Invoice ID: ${sale.id} (REPRINT)`, 14, 30);
-        doc.text(`Date: ${new Date(sale.timestamp).toLocaleString()}`, 14, 35);
-        doc.text(`Customer: ${sale.customerName || 'Guest'}`, 14, 45);
-        if(sale.customerMobile) doc.text(`Mobile: ${sale.customerMobile}`, 14, 50);
         
+        // Header
+        doc.setFontSize(22); doc.setTextColor(0, 128, 128); doc.text("Shreedhar Medical", 14, 20);
+        doc.setFontSize(10); doc.setTextColor(0, 0, 0); 
+        // Updated Address for Reprint
+        doc.text("Mhada Colony, Shrirampur", 14, 25);
+        doc.text("Maharashtra - 413709 | Phone: 9822062809 / 9270262809", 14, 30);
+        
+        doc.text("Invoice / Receipt (REPRINT)", 14, 38);
+
+        doc.text(`Invoice ID: ${sale.id}`, 14, 45);
+        doc.text(`Date: ${new Date(sale.timestamp).toLocaleString()}`, 14, 50);
+        doc.text(`Customer: ${sale.customerName || 'Guest'}`, 14, 55);
+        if(sale.customerMobile) doc.text(`Mobile: ${sale.customerMobile}`, 14, 60);
+        
+        // Updated Table Columns
         autoTable(doc, {
-            startY: sale.customerMobile ? 60 : 55,
-            head: [['Item', 'Qty', 'Price', 'Total']],
-            body: sale.items.map(item => [item.name, item.quantity, item.sellPrice.toFixed(2), (item.quantity * item.sellPrice).toFixed(2)]),
+            startY: sale.customerMobile ? 65 : 60,
+            head: [['Item Name', 'Qty', 'MRP', 'Discount', 'Net Amount']],
+            body: sale.items.map(item => {
+                let discStr = '-';
+                if(item.itemDiscountValue > 0) {
+                    discStr = item.itemDiscountType === 'PERCENT' ? `${item.itemDiscountValue}%` : `-${item.itemDiscountValue}`;
+                }
+                
+                let effectivePrice = item.sellPrice;
+                 if(item.itemDiscountValue > 0) {
+                      if(item.itemDiscountType === 'PERCENT') {
+                          effectivePrice = item.sellPrice - (item.sellPrice * item.itemDiscountValue / 100);
+                      } else {
+                          effectivePrice = item.sellPrice - item.itemDiscountValue;
+                      }
+                 }
+                
+                return [
+                    item.name, 
+                    item.quantity, 
+                    item.sellPrice.toFixed(2), 
+                    discStr, 
+                    (effectivePrice * item.quantity).toFixed(2)
+                ]
+            }),
             theme: 'grid',
-            headStyles: { fillColor: [0, 128, 128] }
+            headStyles: { fillColor: [0, 128, 128] }, // Medical Teal
+            columnStyles: {
+                2: { halign: 'right' }, // MRP
+                3: { halign: 'center' }, // Disc
+                4: { halign: 'right', fontStyle: 'bold' } // Net
+            }
         });
         
         const finalY = (doc as any).lastAutoTable.finalY + 10;
@@ -177,11 +213,11 @@ const SalesHistory: React.FC = () => {
                                     <>
                                         <div className="col-span-2">
                                             <label className="text-xs text-gray-500 block mb-1">Customer Name</label>
-                                            <input type="text" className="w-full p-1 border rounded text-sm" value={editForm.customerName || ''} onChange={(e) => setEditForm({...editForm, customerName: e.target.value})} />
+                                            <input type="text" className="w-full p-1 border rounded text-sm bg-white text-black" value={editForm.customerName || ''} onChange={(e) => setEditForm({...editForm, customerName: e.target.value})} />
                                         </div>
                                         <div className="col-span-2">
                                             <label className="text-xs text-gray-500 block mb-1">Mobile</label>
-                                            <input type="text" className="w-full p-1 border rounded text-sm" value={editForm.customerMobile || ''} onChange={(e) => setEditForm({...editForm, customerMobile: e.target.value})} />
+                                            <input type="text" className="w-full p-1 border rounded text-sm bg-white text-black" value={editForm.customerMobile || ''} onChange={(e) => setEditForm({...editForm, customerMobile: e.target.value})} />
                                         </div>
                                         <div className="col-span-2">
                                             <label className="text-xs text-gray-500 block mb-1">Discount (%)</label>
@@ -189,7 +225,7 @@ const SalesHistory: React.FC = () => {
                                                 type="number" 
                                                 step="0.1" 
                                                 min="0" max="100" 
-                                                className="w-full p-1 border rounded text-sm" 
+                                                className="w-full p-1 border rounded text-sm bg-white text-black" 
                                                 value={editForm.discountPercentage || 0} 
                                                 onChange={(e) => setEditForm({...editForm, discountPercentage: parseFloat(e.target.value) || 0})} 
                                             />
@@ -212,15 +248,37 @@ const SalesHistory: React.FC = () => {
                                             {isEditing ? (
                                                 <div className="flex items-center space-x-2 mt-1">
                                                     <label className="text-xs text-gray-500">Qty:</label>
-                                                    <input type="number" className="w-12 p-1 border rounded text-xs text-center" value={item.quantity} onChange={(e) => handleEditItemChange(item.id, 'quantity', e.target.value)} />
+                                                    <input type="number" className="w-12 p-1 border rounded text-xs text-center bg-white text-black" value={item.quantity} onChange={(e) => handleEditItemChange(item.id, 'quantity', e.target.value)} />
                                                     <label className="text-xs text-gray-500 ml-2">Price:</label>
-                                                    <input type="number" step="0.01" className="w-16 p-1 border rounded text-xs text-right" value={item.sellPrice} onChange={(e) => handleEditItemChange(item.id, 'sellPrice', e.target.value)} />
+                                                    <input type="number" step="0.01" className="w-16 p-1 border rounded text-xs text-right bg-white text-black" value={item.sellPrice} onChange={(e) => handleEditItemChange(item.id, 'sellPrice', e.target.value)} />
                                                 </div>
                                             ) : (
-                                                <p className="text-xs text-gray-500">{item.quantity} x ₹{item.sellPrice.toFixed(2)}</p>
+                                                <div className="flex flex-col">
+                                                    <div className="text-xs text-gray-500">{item.quantity} x MRP ₹{item.sellPrice.toFixed(2)}</div>
+                                                    {item.itemDiscountValue > 0 && (
+                                                         <div className="text-[10px] text-red-500">Disc: {item.itemDiscountType === 'PERCENT' ? item.itemDiscountValue + '%' : '₹'+item.itemDiscountValue}</div>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
-                                        <p className="font-semibold text-gray-800 ml-4">₹{(item.quantity * item.sellPrice).toFixed(2)}</p>
+                                        
+                                        <div className="flex flex-col items-end">
+                                             {/* Calculate rough net for display */}
+                                            {item.itemDiscountValue > 0 ? (
+                                                <>
+                                                    <span className="text-[10px] line-through text-gray-400">₹{(item.sellPrice * item.quantity).toFixed(2)}</span>
+                                                    <p className="font-semibold text-gray-800">
+                                                        ₹{
+                                                            ((item.itemDiscountType === 'PERCENT' 
+                                                                ? item.sellPrice * (1 - item.itemDiscountValue/100) 
+                                                                : item.sellPrice - item.itemDiscountValue) * item.quantity).toFixed(2)
+                                                        }
+                                                    </p>
+                                                </>
+                                            ) : (
+                                                <p className="font-semibold text-gray-800">₹{(item.quantity * item.sellPrice).toFixed(2)}</p>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>

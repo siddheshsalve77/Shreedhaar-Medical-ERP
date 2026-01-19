@@ -11,11 +11,14 @@ export interface Product {
   sellPrice: number;
   stock: number;
   location: string;
+  vendor?: string;    // New Field
   image?: string; // Base64 string for product image
 }
 
 export interface CartItem extends Product {
   quantity: number;
+  itemDiscountType: 'PERCENT' | 'FLAT'; // New Field
+  itemDiscountValue: number;            // New Field
 }
 
 export interface Sale {
@@ -26,8 +29,8 @@ export interface Sale {
   items: CartItem[];
   subTotal: number;
   gstAmount: number;
-  discountPercentage?: number; // New Field
-  discountAmount?: number;     // New Field
+  discountPercentage?: number;
+  discountAmount?: number;
   totalAmount: number;
   totalProfit: number;
   timestamp: number;

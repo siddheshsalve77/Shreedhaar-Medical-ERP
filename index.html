@@ -10,6 +10,17 @@
         theme: {
           extend: {
             colors: {
+              navy: {
+                700: '#164B60',
+                800: '#1B3C73',
+                900: '#002B5B', // Deep Royal Navy (Brand BG)
+                950: '#021024', // Darkest Navy
+              },
+              saffron: {
+                400: '#FFB534',
+                500: '#FF9130', // Vibrant Saffron (Accents)
+                600: '#E55604', // Deep Orange
+              },
               teal: {
                 50: '#f0fdfa',
                 100: '#ccfbf1',
@@ -18,8 +29,8 @@
                 400: '#2dd4bf',
                 500: '#14b8a6',
                 600: '#0d9488',
-                700: '#0f766e', // Medical Tealish
-                800: '#008080', // Primary Brand Color
+                700: '#0f766e',
+                800: '#008080', // Medical Teal
                 900: '#134e4a',
               }
             }
@@ -29,6 +40,26 @@
     </script>
     <!-- Tesseract.js for OCR -->
     <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+    <style>
+      /* Critical Fix: Force Inputs to be Visible */
+      input, select, textarea {
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
+        border-color: #E2E8F0; 
+      }
+      /* Ensure placeholders are readable */
+      ::placeholder {
+        color: #9CA3AF !important; 
+      }
+      /* Fix Autocomplete background in Chrome */
+      input:-webkit-autofill,
+      input:-webkit-autofill:hover, 
+      input:-webkit-autofill:focus, 
+      input:-webkit-autofill:active{
+          -webkit-box-shadow: 0 0 0 30px white inset !important;
+          -webkit-text-fill-color: black !important;
+      }
+    </style>
   <script type="importmap">
 {
   "imports": {

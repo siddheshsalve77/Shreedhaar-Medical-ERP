@@ -23,6 +23,7 @@ const Dashboard: React.FC = () => {
     const todaySales = sales.filter(s => new Date(s.timestamp).toDateString() === todayStr);
     const todayDate = new Date();
     const expiringProducts = products.filter(p => new Date(p.expiryDate) < todayDate);
+    const lowStockItems = products.filter(p => p.stock < 10);
 
     return {
         revenue: rangeSales.reduce((acc, curr) => acc + curr.totalAmount, 0),
@@ -30,7 +31,7 @@ const Dashboard: React.FC = () => {
         todayCollection: todaySales.reduce((acc, curr) => acc + curr.totalAmount, 0),
         todayProfit: todaySales.reduce((acc, curr) => acc + curr.totalProfit, 0),
         expiryStockValue: expiringProducts.reduce((acc, curr) => acc + (curr.buyPrice * curr.stock), 0),
-        rangeSalesList: rangeSales, todaySalesList: todaySales, expiringList: expiringProducts
+        rangeSalesList: rangeSales, todaySalesList: todaySales, expiringList: expiringProducts, lowStockItems
     };
   }, [sales, products, startDate, endDate]);
 
@@ -126,7 +127,7 @@ const Dashboard: React.FC = () => {
           </div>
       </div>
       
-      {/* Metric Cards - MOBILE FIX: Changed to flex-col on small screens, grid on large */}
+      {/* Metric Cards */}
       <div className="flex flex-col md:grid md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div onClick={() => setActiveModal('REVENUE')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition">
           <div className="flex justify-between items-start">
@@ -164,42 +165,75 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Charts Section */}
-      <div className="flex flex-col lg:grid lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 text-gray-800">Revenue Trend</h3>
-            <div className="h-64 md:h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={lineChartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={12} />
-                    <YAxis axisLine={false} tickLine={false} fontSize={12} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
-                    <Line type="monotone" dataKey="revenue" stroke="#008080" strokeWidth={3} dot={{ r: 4, fill: '#008080' }} activeDot={{ r: 6 }} />
-                </LineChart>
-                </ResponsiveContainer>
+      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
+        {/* Charts Section */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800">Revenue Trend</h3>
+                <div className="h-64 md:h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={lineChartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={12} />
+                        <YAxis axisLine={false} tickLine={false} fontSize={12} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
+                        <Line type="monotone" dataKey="revenue" stroke="#008080" strokeWidth={3} dot={{ r: 4, fill: '#008080' }} activeDot={{ r: 6 }} />
+                    </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800">Sales by Category (₹)</h3>
+                <div className="h-64 md:h-72">
+                    {pieChartData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie data={pieChartData} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} outerRadius={80} fill="#8884d8" dataKey="value">
+                                    {pieChartData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip />
+                                <Legend />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <div className="flex h-full items-center justify-center text-gray-400">No sales data for pie chart</div>
+                    )}
+                </div>
             </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 text-gray-800">Sales by Category (₹)</h3>
-            <div className="h-64 md:h-72">
-                 {pieChartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie data={pieChartData} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} outerRadius={80} fill="#8884d8" dataKey="value">
-                                {pieChartData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip />
-                            <Legend />
-                        </PieChart>
-                    </ResponsiveContainer>
+        {/* Low Stock Widget - New Addition */}
+        <div className="lg:col-span-1 bg-white p-0 rounded-xl shadow-sm border border-gray-100 flex flex-col h-[650px] overflow-hidden">
+             <div className="p-4 border-b border-gray-100 bg-red-50 flex items-center justify-between">
+                <h3 className="font-bold text-red-700 flex items-center gap-2"><AlertTriangle size={18}/> Low Stock Alert</h3>
+                <span className="text-xs bg-red-200 text-red-800 px-2 py-1 rounded-full font-bold">{stats.lowStockItems.length}</span>
+             </div>
+             <div className="flex-1 overflow-y-auto">
+                 {stats.lowStockItems.length === 0 ? (
+                     <div className="flex flex-col items-center justify-center h-full text-gray-400 p-6 text-center">
+                         <CheckCircle className="text-green-500 mb-2" size={32}/>
+                         <p>Stock levels are healthy.</p>
+                     </div>
                  ) : (
-                     <div className="flex h-full items-center justify-center text-gray-400">No sales data for pie chart</div>
+                    <div className="divide-y divide-gray-100">
+                        {stats.lowStockItems.map(p => (
+                            <div key={p.id} className="p-3 hover:bg-gray-50 transition-colors">
+                                <div className="flex justify-between items-start mb-1">
+                                    <h4 className="font-semibold text-gray-800 text-sm">{p.name}</h4>
+                                    <span className="font-bold text-red-600 text-sm bg-red-100 px-2 rounded">{p.stock} left</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs text-gray-500">
+                                    <span>{p.category}</span>
+                                    <span className="italic">{p.vendor || 'Unknown Vendor'}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                  )}
-            </div>
+             </div>
         </div>
       </div>
 
@@ -223,5 +257,8 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
+
+// Helper for the empty state
+import { CheckCircle } from 'lucide-react';
 
 export default Dashboard;

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { CartItem, Product, Sale } from '../types';
-import { Search, Trash2, Printer, FileSpreadsheet, PlusCircle, CheckCircle, Sparkles, Tag } from 'lucide-react';
+import { Search, Trash2, Printer, FileSpreadsheet, PlusCircle, CheckCircle, Sparkles, Tag, Percent, Hash, AlertCircle } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -15,11 +15,12 @@ const POS: React.FC = () => {
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [includeGST, setIncludeGST] = useState(false);
-  const [discountPercent, setDiscountPercent] = useState<string>(''); // Store as string for input handling
+  const [discountPercent, setDiscountPercent] = useState<string>(''); // Global Discount
   
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
 
+  // --- Search & Suggestion Logic ---
   const suggestions = useMemo(() => {
     if (cart.length === 0) return [];
     const cartIds = new Set(cart.map(c => c.id));
@@ -41,9 +42,9 @@ const POS: React.FC = () => {
         if (existing.quantity >= product.stock) { alert("Not enough stock"); return prev; }
         return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { ...product, quantity: 1 }];
+      return [...prev, { ...product, quantity: 1, itemDiscountType: 'PERCENT', itemDiscountValue: 0 }];
     });
-    setSearchTerm(''); // Clear search on add for better mobile UX
+    setSearchTerm(''); 
   };
 
   const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
@@ -62,14 +63,53 @@ const POS: React.FC = () => {
     setCart(prev => prev.map(item => item.id === id ? { ...item, sellPrice: price } : item));
   }
 
-  // --- Calculations ---
-  const subtotal = cart.reduce((sum, item) => sum + (item.sellPrice * item.quantity), 0);
-  const gst = includeGST ? subtotal * 0.18 : 0;
-  const grossTotal = subtotal + gst;
+  const toggleItemDiscountType = (id: string) => {
+      setCart(prev => prev.map(item => 
+        item.id === id 
+        ? { ...item, itemDiscountType: item.itemDiscountType === 'PERCENT' ? 'FLAT' : 'PERCENT' }
+        : item
+      ));
+  };
+
+  const updateItemDiscountValue = (id: string, val: string) => {
+      const num = parseFloat(val);
+      if(isNaN(num) || num < 0) return;
+      setCart(prev => prev.map(item => item.id === id ? { ...item, itemDiscountValue: num } : item));
+  };
+
+  // --- Helper Calculations ---
+  const calculateItemNetPrice = (item: CartItem) => {
+      let finalPrice = item.sellPrice;
+      if (item.itemDiscountValue > 0) {
+          if (item.itemDiscountType === 'PERCENT') {
+              finalPrice = item.sellPrice - (item.sellPrice * item.itemDiscountValue / 100);
+          } else {
+              finalPrice = item.sellPrice - item.itemDiscountValue;
+          }
+      }
+      return Math.max(0, finalPrice);
+  };
+
+  const calculateItemTotal = (item: CartItem) => {
+      return calculateItemNetPrice(item) * item.quantity;
+  };
+
+  // --- Global Totals Logic ---
+  const totalMRP = cart.reduce((sum, item) => sum + (item.sellPrice * item.quantity), 0);
+  const netSubtotal = cart.reduce((sum, item) => sum + calculateItemTotal(item), 0);
   
-  const discountRate = parseFloat(discountPercent) || 0;
-  const discountAmount = (grossTotal * discountRate) / 100;
-  const grandTotal = grossTotal - discountAmount;
+  const gstAmount = includeGST ? netSubtotal * 0.18 : 0;
+  const grossTotal = netSubtotal + gstAmount;
+  
+  const globalDiscountRate = parseFloat(discountPercent) || 0;
+  const globalDiscountAmount = (grossTotal * globalDiscountRate) / 100;
+  const grandTotal = grossTotal - globalDiscountAmount;
+
+  // Calculate Total Savings (MRP - Final Payable)
+  // Note: If GST is added, technically the "MRP Value" of the tax should be considered, 
+  // but for simplicity and customer happiness: Savings = (TotalMRP + GST) - GrandTotal
+  const totalPotentialValue = totalMRP + gstAmount;
+  const totalSavings = totalPotentialValue - grandTotal;
 
   const searchResults = products.filter(p => 
     (p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.category.toLowerCase().includes(searchTerm.toLowerCase())) && searchTerm.length > 0
@@ -77,52 +117,150 @@ const POS: React.FC = () => {
 
   const handleGenerateBill = () => {
     if (cart.length === 0) return;
-    const savedSale = processSale(cart, customerMobile, customerName, customerEmail, includeGST, discountRate);
+    const savedSale = processSale(cart, customerMobile, customerName, customerEmail, includeGST, globalDiscountRate);
     setLastSale(savedSale); setShowSuccessModal(true);
-    // Reset Form
     setCart([]); setCustomerName(''); setCustomerEmail(''); setCustomerMobile(''); setSearchTerm(''); setIncludeGST(false); setDiscountPercent('');
   };
 
+  // --- Professional PDF Generation ---
   const generatePDF = () => {
     if (!lastSale) return;
     const doc = new jsPDF();
-    doc.text(`Invoice ID: ${lastSale.id}`, 14, 30);
-    doc.text(`Customer: ${lastSale.customerName || 'Guest'}`, 14, 40);
+    const pageWidth = doc.internal.pageSize.width;
     
-    autoTable(doc, {
-      startY: 50, head: [['Item', 'Qty', 'Price', 'Total']],
-      body: lastSale.items.map(item => [item.name, item.quantity, item.sellPrice.toFixed(2), (item.quantity * item.sellPrice).toFixed(2)]),
-    });
+    // 1. Header Section
+    doc.setFillColor(22, 75, 96); // Navy 700
+    doc.rect(0, 0, pageWidth, 40, 'F');
     
-    const finalY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text(`Subtotal: ${lastSale.subTotal.toFixed(2)}`, 140, finalY);
-    let nextY = finalY + 7;
-    if (lastSale.gstAmount > 0) {
-        doc.text(`GST (18%): ${lastSale.gstAmount.toFixed(2)}`, 140, nextY);
-        nextY += 7;
-    }
-    if (lastSale.discountAmount && lastSale.discountAmount > 0) {
-        doc.setTextColor(220, 53, 69); // Red for discount
-        doc.text(`Discount (${lastSale.discountPercentage}%): -${lastSale.discountAmount.toFixed(2)}`, 140, nextY);
-        doc.setTextColor(0, 0, 0); // Reset black
-        nextY += 7;
-    }
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(24);
     doc.setFont("helvetica", "bold");
-    doc.text(`Grand Total: ${lastSale.totalAmount.toFixed(2)}`, 140, nextY);
+    doc.text("Shreedhar Medical", 14, 18);
+    
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    // UPDATED ADDRESS & PHONE HERE
+    doc.text("Mhada Colony, Shrirampur", 14, 25);
+    doc.text("Maharashtra - 413709 | Phone: 9822062809 / 9270262809", 14, 30);
+    
+    doc.setFontSize(14);
+    doc.text("INVOICE", pageWidth - 14, 18, { align: 'right' });
+    doc.setFontSize(10);
+    doc.text(`#${lastSale.id.slice(-6).toUpperCase()}`, pageWidth - 14, 25, { align: 'right' });
+    doc.text(new Date(lastSale.timestamp).toLocaleString(), pageWidth - 14, 30, { align: 'right' });
+
+    // 2. Customer Details
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11);
+    doc.text("Bill To:", 14, 50);
+    doc.setFontSize(10);
+    doc.text(`Customer Name: ${lastSale.customerName || 'Walk-in Customer'}`, 14, 56);
+    doc.text(`Mobile No: ${lastSale.customerMobile || 'N/A'}`, 14, 61);
+
+    // 3. Product Table
+    autoTable(doc, {
+      startY: 68,
+      head: [['Item Name', 'Batch', 'Exp', 'Qty', 'MRP', 'Disc', 'Net Amt']],
+      body: lastSale.items.map(item => {
+        // Calculate Logic for Display
+        let discDisplay = '-';
+        if(item.itemDiscountValue > 0) {
+             discDisplay = item.itemDiscountType === 'PERCENT' ? `${item.itemDiscountValue}%` : `${item.itemDiscountValue}`;
+        }
+        
+        // Calculate Net for this item row
+        let effectivePrice = item.sellPrice;
+        if(item.itemDiscountValue > 0) {
+            if(item.itemDiscountType === 'PERCENT') effectivePrice = item.sellPrice * (1 - item.itemDiscountValue/100);
+            else effectivePrice = item.sellPrice - item.itemDiscountValue;
+        }
+
+        return [
+          item.name,
+          item.batch,
+          item.expiryDate,
+          item.quantity,
+          item.sellPrice.toFixed(2),
+          discDisplay,
+          (effectivePrice * item.quantity).toFixed(2)
+        ];
+      }),
+      theme: 'grid',
+      headStyles: { fillColor: [22, 75, 96], textColor: 255 }, // Navy Header
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 50 }, // Name
+        4: { halign: 'right' }, // MRP
+        5: { halign: 'center' }, // Disc
+        6: { halign: 'right', fontStyle: 'bold' } // Net
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY + 5;
+
+    // 4. Totals Section & Footer
+    // Left Side: Terms
+    doc.setFontSize(8);
+    doc.setTextColor(100);
+    doc.text("Terms & Conditions:", 14, finalY + 10);
+    doc.text("1. Goods once sold will not be taken back.", 14, finalY + 15);
+    doc.text("2. Please consult doctor before consuming.", 14, finalY + 20);
+    
+    // Right Side: Totals
+    let currentY = finalY + 5;
+    const rightX = pageWidth - 60;
+    const rightValueX = pageWidth - 14;
+
+    // Helper for right aligned text
+    const addRow = (label: string, value: string, isBold = false) => {
+        doc.setFont("helvetica", isBold ? "bold" : "normal");
+        doc.setFontSize(isBold ? 11 : 10);
+        doc.setTextColor(0,0,0);
+        doc.text(label, rightX, currentY);
+        doc.text(value, rightValueX, currentY, { align: 'right' });
+        currentY += 6;
+    };
+
+    // Calculate Total MRP for the PDF to show savings
+    const pdfTotalMRP = lastSale.items.reduce((sum, i) => sum + (i.sellPrice * i.quantity), 0);
+    
+    // Strikethrough Total MRP
+    doc.setTextColor(150);
+    doc.setFontSize(10);
+    doc.text("Total MRP:", rightX, currentY);
+    doc.text(`${pdfTotalMRP.toFixed(2)}`, rightValueX, currentY, { align: 'right' });
+    // Draw line through price
+    const textWidth = doc.getTextWidth(`${pdfTotalMRP.toFixed(2)}`);
+    doc.line(rightValueX - textWidth, currentY - 1, rightValueX, currentY - 1);
+    currentY += 6;
+
+    if (lastSale.gstAmount > 0) addRow("GST (18%):", `+ ${lastSale.gstAmount.toFixed(2)}`);
+    if (lastSale.discountAmount > 0) {
+        doc.setTextColor(200, 0, 0);
+        addRow("Discount:", `- ${lastSale.discountAmount.toFixed(2)}`);
+    }
+
+    // Grand Total Box
+    doc.setFillColor(240, 240, 240);
+    doc.rect(rightX - 2, currentY - 4, 60, 10, 'F');
+    doc.setTextColor(0, 50, 0);
+    addRow("Net Payable:", `${lastSale.totalAmount.toFixed(2)}`, true);
+
+    // Signature
+    doc.setFontSize(9);
+    doc.setTextColor(0,0,0);
+    doc.text("Authorized Signatory", pageWidth - 14, finalY + 40, { align: 'right' });
+    doc.text("Shreedhar Medical", pageWidth - 14, finalY + 45, { align: 'right' });
+
     doc.save(`Invoice_${lastSale.id}.pdf`);
   };
 
   const generateExcel = () => {
      if(!lastSale) return;
-     const itemsData = lastSale.items.map(c => ({ Name: c.name, Quantity: c.quantity, Price: c.sellPrice, Total: c.quantity * c.sellPrice }));
-     
-     // Add summary as bottom rows
-     itemsData.push({ Name: '', Quantity: 0, Price: 0, Total: 0 }); // spacer
-     itemsData.push({ Name: 'Subtotal', Quantity: 0, Price: 0, Total: lastSale.subTotal });
-     if(lastSale.gstAmount > 0) itemsData.push({ Name: 'GST (18%)', Quantity: 0, Price: 0, Total: lastSale.gstAmount });
-     if(lastSale.discountAmount && lastSale.discountAmount > 0) itemsData.push({ Name: `Discount (${lastSale.discountPercentage}%)`, Quantity: 0, Price: 0, Total: -lastSale.discountAmount });
-     itemsData.push({ Name: 'Grand Total', Quantity: 0, Price: 0, Total: lastSale.totalAmount });
-
+     const itemsData = lastSale.items.map(item => ({ 
+         Item: item.name, Batch: item.batch, Expiry: item.expiryDate, Qty: item.quantity, 
+         MRP: item.sellPrice, NetAmount: (item.sellPrice * item.quantity).toFixed(2) 
+     }));
      const ws = XLSX.utils.json_to_sheet(itemsData);
      const wb = XLSX.utils.book_new();
      XLSX.utils.book_append_sheet(wb, ws, "Invoice");
@@ -137,13 +275,13 @@ const POS: React.FC = () => {
           <h2 className="font-semibold text-gray-700 mb-2">Product Search</h2>
           <div className="relative">
             <Search className="absolute left-3 top-3 text-gray-400" size={20} />
-            <input type="text" placeholder="Search medicine..." className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white text-gray-900 text-lg" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <input type="text" placeholder="Search medicine..." className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-teal-500 outline-none bg-white text-gray-900 text-lg shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
         </div>
         
         {/* Search Results */}
         {searchTerm.length > 0 && (
-            <div className="absolute top-[88px] left-0 right-0 bottom-0 bg-white z-50 overflow-y-auto border-t border-gray-100 shadow-2xl p-2 md:relative md:top-0 md:shadow-none">
+            <div className="absolute top-[88px] left-0 w-full md:w-auto md:left-0 md:right-0 bg-white z-50 overflow-y-auto border-t border-gray-100 shadow-2xl p-2 md:max-h-[60vh] max-h-[50vh]">
                 {searchResults.map(product => (
                     <div key={product.id} className="flex items-center justify-between p-4 mb-2 bg-gray-50 rounded-lg hover:bg-teal-50 active:bg-teal-100 transition-colors cursor-pointer border border-gray-200 shadow-sm" onClick={() => addToCart(product)}>
                     <div>
@@ -181,7 +319,7 @@ const POS: React.FC = () => {
 
       {/* RIGHT: Billing Cart */}
       <div className="w-full md:w-[450px] flex flex-col bg-white rounded-xl shadow-lg border border-teal-100 overflow-hidden h-[75vh] md:h-auto">
-        <div className="p-4 bg-teal-800 text-white"><h2 className="font-bold text-lg flex items-center gap-2">Current Bill</h2></div>
+        <div className="p-4 bg-navy-800 text-white"><h2 className="font-bold text-lg flex items-center gap-2">Current Bill</h2></div>
         <div className="p-3 bg-gray-50 border-b border-gray-200 space-y-2">
             <input type="text" placeholder="Customer Name" className="w-full p-2 text-sm border rounded bg-white text-gray-900" value={customerName} onChange={e=>setCustomerName(e.target.value)}/>
             <div className="flex gap-2">
@@ -192,76 +330,126 @@ const POS: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
           {cart.length === 0 && <div className="text-center text-gray-400 mt-10">Cart is empty</div>}
-          {cart.map(item => (
-            <div key={item.id} className="flex flex-col border-b border-gray-100 pb-2">
-              <div className="flex justify-between items-start mb-1">
-                 <p className="text-sm font-medium text-gray-800 w-1/2 break-words">{item.name}</p>
-                 <div className="flex items-center space-x-1">
-                    <span className="text-xs text-gray-500">₹</span>
-                    <input type="number" step="0.01" className="w-16 p-1 text-right text-sm border rounded bg-white text-gray-900" value={item.sellPrice} onChange={(e) => updateSellPrice(item.id, e.target.value)} />
-                 </div>
-              </div>
-              <div className="flex justify-between items-center">
-                 <p className="text-xs text-gray-500 font-mono">₹{(item.sellPrice * item.quantity).toFixed(2)}</p>
-                 <div className="flex items-center space-x-2 bg-gray-100 rounded p-1">
-                    <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="w-6 h-6 rounded bg-white text-gray-800 shadow-sm">-</button>
-                    <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
-                    <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-6 h-6 rounded bg-white text-gray-800 shadow-sm">+</button>
+          {cart.map(item => {
+              const netPrice = calculateItemNetPrice(item);
+              const hasDiscount = item.itemDiscountValue > 0;
+              return (
+                <div key={item.id} className="flex flex-col border-b border-gray-100 pb-2">
+                <div className="flex justify-between items-start mb-1">
+                    <p className="text-sm font-medium text-gray-800 w-1/2 break-words">{item.name}</p>
+                    <div className="flex items-center space-x-1">
+                        <span className="text-xs text-gray-500">MRP ₹</span>
+                        <input type="number" step="0.01" className="w-16 p-1 text-right text-sm border rounded bg-white text-gray-900" value={item.sellPrice} onChange={(e) => updateSellPrice(item.id, e.target.value)} />
+                    </div>
                 </div>
-                <button onClick={() => removeFromCart(item.id)} className="text-red-500"><Trash2 size={18} /></button>
-              </div>
-            </div>
-          ))}
+                
+                {/* Dual Mode Discount Per Item */}
+                <div className="flex items-center justify-between mb-2 bg-gray-50 p-1 rounded">
+                    <div className="flex items-center space-x-2">
+                        <button 
+                            onClick={() => toggleItemDiscountType(item.id)}
+                            className={`p-1 rounded border ${item.itemDiscountType === 'PERCENT' ? 'bg-blue-100 text-blue-600 border-blue-200' : 'bg-green-100 text-green-600 border-green-200'}`}
+                            title="Toggle Discount Mode"
+                        >
+                            {item.itemDiscountType === 'PERCENT' ? <Percent size={14}/> : <Hash size={14}/>}
+                        </button>
+                        <input 
+                            type="number" 
+                            className="w-16 p-1 text-xs border rounded bg-white text-gray-900"
+                            placeholder="Disc"
+                            value={item.itemDiscountValue === 0 ? '' : item.itemDiscountValue}
+                            onChange={(e) => updateItemDiscountValue(item.id, e.target.value)}
+                        />
+                    </div>
+                    {hasDiscount && (
+                        <span className="text-xs text-red-500 font-medium">
+                            {item.itemDiscountType === 'PERCENT' ? `-${item.itemDiscountValue}%` : `-₹${item.itemDiscountValue}`} off
+                        </span>
+                    )}
+                </div>
+
+                <div className="flex justify-between items-center">
+                    <div className="flex flex-col">
+                        {hasDiscount ? (
+                             <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-400 line-through">₹{item.sellPrice.toFixed(2)}</span>
+                                <span className="text-sm font-bold text-teal-800 font-mono">₹{netPrice.toFixed(2)}</span>
+                             </div>
+                        ) : (
+                             <span className="text-sm font-bold text-teal-800 font-mono">₹{netPrice.toFixed(2)}</span>
+                        )}
+                        <span className="text-[10px] text-gray-500">Unit Price</span>
+                    </div>
+
+                    <div className="flex items-center space-x-2 bg-gray-100 rounded p-1">
+                        <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="w-6 h-6 rounded bg-white text-gray-800 shadow-sm">-</button>
+                        <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
+                        <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="w-6 h-6 rounded bg-white text-gray-800 shadow-sm">+</button>
+                    </div>
+                    
+                    <div className="flex flex-col items-end w-16">
+                        <span className="font-bold text-gray-900">₹{calculateItemTotal(item).toFixed(2)}</span>
+                        <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600 mt-1"><Trash2 size={16} /></button>
+                    </div>
+                </div>
+                </div>
+            )})}
         </div>
 
-        <div className="p-4 bg-gray-50 border-t border-gray-200">
-           {/* Tax Toggle */}
-           <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-700">Tax (GST 18%)</span>
-              <div className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${includeGST ? 'bg-teal-600' : 'bg-gray-300'}`} onClick={() => setIncludeGST(!includeGST)}>
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${includeGST ? 'translate-x-6' : 'translate-x-1'}`} />
-              </div>
+        {/* --- BOTTOM SUMMARY SECTION --- */}
+        <div className="bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-10">
+           {/* Tax & Global Discount Controls */}
+           <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-2">
+               <div className="flex items-center space-x-2">
+                   <input type="checkbox" id="gst" checked={includeGST} onChange={(e) => setIncludeGST(e.target.checked)} className="rounded text-teal-600 focus:ring-teal-500"/>
+                   <label htmlFor="gst" className="text-xs font-semibold text-gray-700 cursor-pointer">Add GST (18%)</label>
+               </div>
+               <div className="flex items-center space-x-2">
+                   <span className="text-xs font-semibold text-gray-700">Disc %</span>
+                   <input 
+                    type="number" min="0" max="100" 
+                    className="w-12 p-1 text-xs border rounded text-center bg-white" 
+                    placeholder="0" value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} 
+                   />
+               </div>
            </div>
 
-           {/* Discount Section */}
-           <div className="flex items-center justify-between mb-3 bg-white p-2 rounded border border-gray-200">
-              <div className="flex items-center gap-2 text-gray-700">
-                  <Tag size={16} />
-                  <span className="text-sm font-semibold">Discount (%)</span>
-              </div>
-              <input 
-                type="number" 
-                min="0" 
-                max="100" 
-                step="0.1"
-                placeholder="0" 
-                className="w-20 p-1 text-right text-sm border rounded focus:ring-1 focus:ring-teal-500 bg-gray-50" 
-                value={discountPercent} 
-                onChange={e => setDiscountPercent(e.target.value)} 
-              />
-           </div>
-           
-           <div className="space-y-1 mb-3">
-              <div className="flex justify-between text-xs text-gray-500"><span>Subtotal</span><span>₹{subtotal.toFixed(2)}</span></div>
-              {includeGST && <div className="flex justify-between text-xs text-gray-500"><span>GST (18%)</span><span>₹{gst.toFixed(2)}</span></div>}
-              
-              {/* Gross Total Display (If discount applies) */}
-              {discountRate > 0 && <div className="flex justify-between text-xs text-gray-500"><span>Gross Total</span><span>₹{grossTotal.toFixed(2)}</span></div>}
+           {/* Totals Display */}
+           <div className="p-4 space-y-1">
+               {/* 1. Strikethrough Total MRP */}
+               <div className="flex justify-between items-end">
+                   <span className="text-xs text-gray-400 font-medium">Total MRP</span>
+                   <span className="text-sm text-gray-400 line-through decoration-gray-400 decoration-1">
+                       ₹{totalMRP.toFixed(2)}
+                   </span>
+               </div>
+               
+               {/* 2. Breakdowns (GST/Discount) */}
+               {(gstAmount > 0 || globalDiscountAmount > 0) && (
+                   <div className="flex flex-col text-xs text-gray-500">
+                        {gstAmount > 0 && <div className="flex justify-between"><span>+ GST</span><span>₹{gstAmount.toFixed(2)}</span></div>}
+                        {globalDiscountAmount > 0 && <div className="flex justify-between text-red-500"><span>- Global Disc</span><span>₹{globalDiscountAmount.toFixed(2)}</span></div>}
+                   </div>
+               )}
 
-              {/* Discount Savings Display */}
-              {discountRate > 0 && (
-                 <div className="flex justify-between text-xs text-red-600 font-medium">
-                     <span>Discount Applied (-{discountRate}%)</span>
-                     <span>-₹{discountAmount.toFixed(2)}</span>
-                 </div>
-              )}
-
-              <div className="flex justify-between text-xl font-bold text-gray-900 pt-2 border-t border-gray-200"><span>Payable</span><span>₹{grandTotal.toFixed(2)}</span></div>
+               {/* 3. Final Payable & Savings */}
+               <div className="flex justify-between items-center pt-2">
+                   <div className="flex flex-col">
+                       <span className="text-sm font-bold text-gray-700">Net Payable</span>
+                       {totalSavings > 0 && (
+                           <div className="flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full mt-1 border border-green-200">
+                               <Sparkles size={10} fill="currentColor"/>
+                               <span className="font-bold">You Save ₹{totalSavings.toFixed(2)}</span>
+                           </div>
+                       )}
+                   </div>
+                   <span className="text-3xl font-extrabold text-teal-700">₹{grandTotal.toFixed(0)}<span className="text-lg text-gray-400 font-medium">{grandTotal % 1 !== 0 ? grandTotal.toFixed(2).slice(-3) : '.00'}</span></span>
+               </div>
+               
+               <button onClick={handleGenerateBill} disabled={cart.length === 0} className="w-full mt-3 bg-navy-800 text-white py-3 rounded-lg shadow-lg hover:bg-navy-900 active:transform active:scale-95 transition-all font-bold text-lg flex items-center justify-center gap-2">
+                   <CheckCircle size={20}/> Confirm & Print
+               </button>
            </div>
-           
-           <button onClick={handleGenerateBill} disabled={cart.length === 0} className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-teal-800 text-white rounded-lg hover:bg-teal-900 shadow-md disabled:opacity-50 font-bold text-lg">
-             <CheckCircle size={22} /> <span>Generate Bill</span>
-           </button>
         </div>
       </div>
 
@@ -270,16 +458,19 @@ const POS: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
              <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="text-green-600 w-8 h-8" /></div>
-                <h3 className="text-2xl font-bold text-gray-800">Bill Saved!</h3>
+                <h3 className="text-2xl font-bold text-gray-800">Bill Saved Successfully!</h3>
+                <p className="text-gray-500 mt-1">Invoice #{lastSale.id.slice(-6).toUpperCase()}</p>
                 {lastSale.discountAmount && lastSale.discountAmount > 0 && (
-                    <p className="text-green-600 font-semibold mt-2">You saved ₹{lastSale.discountAmount.toFixed(2)} on this order!</p>
+                    <div className="mt-3 inline-block px-3 py-1 bg-green-50 text-green-700 rounded-full text-sm font-bold border border-green-100">
+                        Total Savings: ₹{totalSavings.toFixed(2)}
+                    </div>
                 )}
              </div>
              <div className="space-y-3">
-                <button onClick={generatePDF} className="w-full flex items-center justify-center space-x-2 p-3 bg-teal-600 text-white rounded-lg"><Printer size={18} /> <span>Download PDF</span></button>
-                <button onClick={generateExcel} className="w-full flex items-center justify-center space-x-2 p-3 border border-gray-300 text-gray-700 rounded-lg"><FileSpreadsheet size={18} /> <span>Download Excel</span></button>
+                <button onClick={generatePDF} className="w-full flex items-center justify-center space-x-2 p-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium"><Printer size={18} /> <span>Print Invoice (PDF)</span></button>
+                <button onClick={generateExcel} className="w-full flex items-center justify-center space-x-2 p-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"><FileSpreadsheet size={18} /> <span>Export Excel</span></button>
              </div>
-             <button onClick={() => setShowSuccessModal(false)} className="mt-6 w-full p-2 text-gray-400 text-sm">Close</button>
+             <button onClick={() => setShowSuccessModal(false)} className="mt-6 w-full p-2 text-gray-400 text-sm hover:text-gray-600">Close Window</button>
           </div>
         </div>
       )}
