@@ -22,6 +22,7 @@ import {
 
 interface AppContextType {
   user: User | null;
+  loading: boolean; // Added loading state to interface
   isAuthenticated: boolean;
   login: (email: string, pass: string) => Promise<void>;
   logout: () => void;
@@ -29,10 +30,10 @@ interface AppContextType {
   sales: Sale[];
   categories: string[];
   notifications: Notification[];
-  addProduct: (product: Product) => void;
-  updateProduct: (product: Product) => void;
-  deleteProduct: (id: string) => void;
-  addCategory: (category: string) => void;
+  addProduct: (product: Product) => Promise<void>; // Changed to Promise for better handling
+  updateProduct: (product: Product) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
+  addCategory: (category: string) => Promise<void>;
   processSale: (items: CartItem[], customerMobile?: string, customerName?: string, customerEmail?: string, includeGST?: boolean, discountPercentage?: number) => Promise<Sale | null>;
   updateSale: (updatedSale: Sale) => Promise<void>;
   deleteSale: (saleId: string) => Promise<void>;
@@ -48,20 +49,23 @@ const INITIAL_CATEGORIES = ['Syrup', 'Tablet/Medicine', 'Lotion', 'Cosmetics', '
 
 export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true); // CRITICAL: Start loading as true
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
-  // 1. Auth Listener
+  // 1. Critical Auth Listener (Fixes Session Crash)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log("Auth State Changed. User:", currentUser ? currentUser.email : "Logged Out");
       setUser(currentUser);
+      setLoading(false); // CRITICAL: Stop loading only after Firebase checks auth
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. Data Listeners (Real-time Sync) - Only run if logged in
+  // 2. Data Listeners (Real-time Sync)
   useEffect(() => {
     if (!user) {
       setProducts([]);
@@ -69,13 +73,13 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       return;
     }
 
-    // Products Listener (Inventory)
+    // Products Listener
     const unsubProducts = onSnapshot(collection(db, "products"), (snapshot) => {
       const prodList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prodList);
     }, (error) => console.error("Products sync error:", error));
 
-    // Sales Listener (Bills & Stats)
+    // Sales Listener
     const qSales = query(collection(db, "sales"), orderBy("timestamp", "desc"));
     const unsubSales = onSnapshot(qSales, (snapshot) => {
       const saleList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Sale));
@@ -102,6 +106,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       await signInWithEmailAndPassword(auth, email, pass);
       addNotification("Welcome back to Cloud Dashboard", "info");
     } catch (error: any) {
+      console.error("Login Error:", error);
       addNotification("Login Failed: " + error.message, "alert");
       throw error;
     }
@@ -120,31 +125,56 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
   const removeNotification = (id: string) => setNotifications(prev => prev.filter(n => n.id !== id));
   const markNotificationRead = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
 
-  // --- Inventory Actions (Cloud) ---
+  // --- Inventory Actions (Robust Error Handling) ---
 
   const addCategory = async (category: string) => {
-    if (!categories.includes(category)) {
-      await addDoc(collection(db, "categories"), { name: category });
-      addNotification(`Category '${category}' synced`, 'info');
+    try {
+      if (!categories.includes(category)) {
+        await addDoc(collection(db, "categories"), { name: category });
+        addNotification(`Category '${category}' synced`, 'info');
+      }
+    } catch (error) {
+      console.error("Error adding category:", error);
+      addNotification("Failed to add category", "alert");
     }
   };
 
   const addProduct = async (product: Product) => {
-    // We let Firestore generate the ID or use the one provided if strictly needed
-    const { id, ...data } = product; 
-    await addDoc(collection(db, "products"), data);
-    addNotification(`Product added to Cloud: ${product.name}`, 'info');
+    try {
+      // Exclude ID from the data payload so Firestore generates one (or use provided if specific)
+      // Note: If product.id is a temp timestamp, we let Firestore create a new auto-ID
+      // But if we want to update the local list optimistically, we handle that via onSnapshot
+      const { id, ...data } = product; 
+      
+      console.log("Attempting to add product:", data);
+      await addDoc(collection(db, "products"), data);
+      
+      addNotification(`Product added to Cloud: ${product.name}`, 'info');
+    } catch (error: any) {
+      console.error("Error adding product:", error);
+      addNotification("Failed to save medicine: " + error.message, "alert");
+    }
   };
 
   const updateProduct = async (updatedProduct: Product) => {
-    const productRef = doc(db, "products", updatedProduct.id);
-    await updateDoc(productRef, { ...updatedProduct });
-    addNotification(`Product updated: ${updatedProduct.name}`, 'info');
+    try {
+      const productRef = doc(db, "products", updatedProduct.id);
+      await updateDoc(productRef, { ...updatedProduct });
+      addNotification(`Product updated: ${updatedProduct.name}`, 'info');
+    } catch (error: any) {
+      console.error("Error updating product:", error);
+      addNotification("Failed to update medicine", "alert");
+    }
   };
 
   const deleteProduct = async (id: string) => {
-    await deleteDoc(doc(db, "products", id));
-    addNotification('Product deleted from inventory', 'warning');
+    try {
+      await deleteDoc(doc(db, "products", id));
+      addNotification('Product deleted from inventory', 'warning');
+    } catch (error: any) {
+      console.error("Error deleting product:", error);
+      addNotification("Failed to delete medicine", "alert");
+    }
   };
 
   // --- Billing Logic (Atomic Transactions) ---
@@ -188,6 +218,8 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
         timestamp: Date.now(), customerName: customerName || '', customerEmail: customerEmail || '', customerMobile: customerMobile || ''
       };
 
+      console.log("Processing Sale Transaction...", newSaleData);
+
       // 2. Atomic Batch Write (Sale + Inventory Deduct)
       const batch = writeBatch(db);
 
@@ -206,11 +238,10 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       await batch.commit();
       addNotification(`Cloud Bill Generated: ₹${finalTotal.toFixed(2)}`, 'info');
       
-      // Return constructed sale object with ID for UI
       return { id: newSaleRef.id, ...newSaleData } as Sale;
 
     } catch (e: any) {
-      console.error(e);
+      console.error("Transaction Failed:", e);
       addNotification("Transaction Failed: " + e.message, "alert");
       return null;
     }
@@ -222,6 +253,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       const saleToDelete = sales.find(s => s.id === saleId);
       if (!saleToDelete) return;
 
+      console.log("Deleting Sale & Rolling back stock:", saleId);
       const batch = writeBatch(db);
 
       // 1. Restore Stock (Rollback)
@@ -232,7 +264,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
         });
       });
 
-      // 2. Delete Sale Record (Updates Stats via onSnapshot automatically)
+      // 2. Delete Sale Record
       const saleRef = doc(db, "sales", saleId);
       batch.delete(saleRef);
 
@@ -240,6 +272,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
       addNotification(`Sale #${saleId.slice(-4)} deleted. Stock Restored.`, 'alert');
 
     } catch (e: any) {
+      console.error("Delete Sale Failed:", e);
       addNotification("Delete Failed: " + e.message, "alert");
     }
   };
@@ -253,6 +286,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
        });
        addNotification("Sale Details Updated", "info");
      } catch(e: any) {
+       console.error("Update Sale Failed:", e);
        addNotification("Update Failed", "alert");
      }
   };
@@ -263,7 +297,7 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
 
   return (
     <AppContext.Provider value={{
-      user, isAuthenticated: !!user, login, logout, 
+      user, loading, isAuthenticated: !!user, login, logout, 
       products, sales, categories, notifications,
       addProduct, updateProduct, deleteProduct, addCategory,
       processSale, updateSale, deleteSale, resetSystem, removeNotification, markNotificationRead

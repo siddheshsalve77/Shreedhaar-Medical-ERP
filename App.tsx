@@ -7,13 +7,25 @@ import Inventory from './components/Inventory';
 import POS from './components/POS';
 import SalesHistory from './components/SalesHistory';
 import { ViewState } from './types';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Loader2 } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, notifications, removeNotification } = useApp();
+  const { isAuthenticated, notifications, removeNotification, loading } = useApp();
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // 1. Global Loading State (Prevents Login Flash)
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-50 text-teal-800">
+        <Loader2 size={48} className="animate-spin mb-4" />
+        <h2 className="text-xl font-bold">Connecting to Medical Cloud...</h2>
+        <p className="text-gray-500 mt-2">Verifying Security Credentials</p>
+      </div>
+    );
+  }
+
+  // 2. Auth Check
   if (!isAuthenticated) {
     return <Login />;
   }
