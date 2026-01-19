@@ -8,12 +8,11 @@ type ModalType = 'REVENUE' | 'PROFIT' | 'COLLECTION' | 'TODAY_PROFIT' | 'EXPIRY'
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 const Dashboard: React.FC = () => {
-  const { sales, products, resetSystem } = useApp();
+  const { sales, products, hardReset } = useApp();
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
 
-  // --- Statistics Calculation ---
   const stats = useMemo(() => {
     const start = new Date(startDate); start.setHours(0,0,0,0);
     const end = new Date(endDate); end.setHours(23,59,59,999);
@@ -35,7 +34,6 @@ const Dashboard: React.FC = () => {
     };
   }, [sales, products, startDate, endDate]);
 
-  // Chart Data
   const lineChartData = useMemo(() => {
     const data = [];
     const start = new Date(startDate); const end = new Date(endDate);
@@ -102,21 +100,24 @@ const Dashboard: React.FC = () => {
       }
   };
 
-  const handleReset = () => {
-      const password = prompt("ENTER ADMIN PASSWORD TO RESET SYSTEM DATA:");
-      if(password === "Shreedhar.Medical@2026") {
-          if(window.confirm("CRITICAL WARNING: This will delete ALL Inventory and Sales history. This cannot be undone. Proceed?")) resetSystem();
-      } else if (password !== null) alert("Incorrect Password");
+  const handleReset = async () => {
+      if (window.confirm("CRITICAL WARNING: This will delete ALL Inventory, Sales, and Categories. This cannot be undone. Proceed?")) {
+          const password = prompt("ENTER ADMIN PASSWORD TO CONFIRM FACTORY RESET:");
+          if(password === "Medical@123") {
+              await hardReset();
+          } else if (password !== null) {
+              alert("Incorrect Password. Reset aborted.");
+          }
+      }
   }
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Header & Date Filter */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-800">Analytics Dashboard</h1>
           <div className="flex gap-2 w-full md:w-auto justify-end">
-            <button onClick={handleReset} className="flex items-center space-x-2 px-3 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 border border-red-200 text-sm font-semibold">
-                 <RotateCcw size={16} /> <span className="hidden md:inline">Reset Data</span>
+            <button onClick={handleReset} className="flex items-center space-x-2 px-3 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 border border-red-200 text-sm font-semibold transition-colors">
+                 <RotateCcw size={16} /> <span className="hidden md:inline">Factory Reset</span>
             </button>
             <div className="flex items-center space-x-2 bg-white p-2 rounded-lg shadow-sm border border-gray-200 flex-1 md:flex-none justify-center">
                 <Calendar size={18} className="text-gray-500" />
@@ -127,7 +128,6 @@ const Dashboard: React.FC = () => {
           </div>
       </div>
       
-      {/* Metric Cards */}
       <div className="flex flex-col md:grid md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div onClick={() => setActiveModal('REVENUE')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition">
           <div className="flex justify-between items-start">
@@ -135,28 +135,24 @@ const Dashboard: React.FC = () => {
              <div className="p-2 bg-teal-50 rounded-full text-teal-600"><DollarSign size={20} /></div>
           </div>
         </div>
-
         <div onClick={() => setActiveModal('PROFIT')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition">
           <div className="flex justify-between items-start">
              <div><p className="text-xs text-gray-500 uppercase font-semibold">Total Profit</p><h3 className="text-xl font-bold text-gray-900 mt-1">₹{stats.profit.toFixed(0)}</h3></div>
              <div className="p-2 bg-green-50 rounded-full text-green-600"><TrendingUp size={20} /></div>
           </div>
         </div>
-
         <div onClick={() => setActiveModal('COLLECTION')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition ring-2 ring-teal-50">
           <div className="flex justify-between items-start">
              <div><p className="text-xs text-gray-500 uppercase font-semibold">Today's Sales</p><h3 className="text-xl font-bold text-teal-700 mt-1">₹{stats.todayCollection.toFixed(0)}</h3></div>
              <div className="p-2 bg-blue-50 rounded-full text-blue-600"><Package size={20} /></div>
           </div>
         </div>
-
         <div onClick={() => setActiveModal('TODAY_PROFIT')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition">
           <div className="flex justify-between items-start">
              <div><p className="text-xs text-gray-500 uppercase font-semibold">Today's Profit</p><h3 className="text-xl font-bold text-green-700 mt-1">₹{stats.todayProfit.toFixed(0)}</h3></div>
              <div className="p-2 bg-green-50 rounded-full text-green-600"><TrendingUp size={20} /></div>
           </div>
         </div>
-
         <div onClick={() => setActiveModal('EXPIRY')} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition">
           <div className="flex justify-between items-start">
              <div><p className="text-xs text-gray-500 uppercase font-semibold">Expiry Value</p><h3 className="text-xl font-bold text-red-600 mt-1">₹{stats.expiryStockValue.toFixed(0)}</h3></div>
@@ -166,7 +162,6 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
-        {/* Charts Section */}
         <div className="lg:col-span-2 flex flex-col gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                 <h3 className="text-lg font-semibold mb-4 text-gray-800">Revenue Trend</h3>
@@ -182,7 +177,6 @@ const Dashboard: React.FC = () => {
                     </ResponsiveContainer>
                 </div>
             </div>
-
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                 <h3 className="text-lg font-semibold mb-4 text-gray-800">Sales by Category (₹)</h3>
                 <div className="h-64 md:h-72">
@@ -205,7 +199,6 @@ const Dashboard: React.FC = () => {
             </div>
         </div>
 
-        {/* Low Stock Widget - New Addition */}
         <div className="lg:col-span-1 bg-white p-0 rounded-xl shadow-sm border border-gray-100 flex flex-col h-[650px] overflow-hidden">
              <div className="p-4 border-b border-gray-100 bg-red-50 flex items-center justify-between">
                 <h3 className="font-bold text-red-700 flex items-center gap-2"><AlertTriangle size={18}/> Low Stock Alert</h3>
@@ -237,7 +230,6 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Drill-Down Modal */}
       {activeModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
@@ -258,7 +250,5 @@ const Dashboard: React.FC = () => {
   );
 };
 
-// Helper for the empty state
 import { CheckCircle } from 'lucide-react';
-
 export default Dashboard;
