@@ -42,8 +42,22 @@ const SalesHistory: React.FC = () => {
         
         const finalY = (doc as any).lastAutoTable.finalY + 10;
         doc.text(`Subtotal: ${sale.subTotal.toFixed(2)}`, 140, finalY);
-        if (sale.gstAmount > 0) doc.text(`GST (18%): ${sale.gstAmount.toFixed(2)}`, 140, finalY + 5);
-        doc.setFont("helvetica", "bold"); doc.text(`Grand Total: ${sale.totalAmount.toFixed(2)}`, 140, finalY + (sale.gstAmount > 0 ? 12 : 8));
+        let nextY = finalY + 7;
+
+        if (sale.gstAmount > 0) {
+            doc.text(`GST (18%): ${sale.gstAmount.toFixed(2)}`, 140, nextY);
+            nextY += 7;
+        }
+
+        if (sale.discountAmount && sale.discountAmount > 0) {
+             doc.setTextColor(220, 53, 69);
+             doc.text(`Discount (${sale.discountPercentage}%): -${sale.discountAmount.toFixed(2)}`, 140, nextY);
+             doc.setTextColor(0,0,0);
+             nextY += 7;
+        }
+
+        doc.setFont("helvetica", "bold"); 
+        doc.text(`Grand Total: ${sale.totalAmount.toFixed(2)}`, 140, nextY);
         doc.save(`Reprint_Invoice_${sale.id}.pdf`);
     };
 
@@ -169,6 +183,17 @@ const SalesHistory: React.FC = () => {
                                             <label className="text-xs text-gray-500 block mb-1">Mobile</label>
                                             <input type="text" className="w-full p-1 border rounded text-sm" value={editForm.customerMobile || ''} onChange={(e) => setEditForm({...editForm, customerMobile: e.target.value})} />
                                         </div>
+                                        <div className="col-span-2">
+                                            <label className="text-xs text-gray-500 block mb-1">Discount (%)</label>
+                                            <input 
+                                                type="number" 
+                                                step="0.1" 
+                                                min="0" max="100" 
+                                                className="w-full p-1 border rounded text-sm" 
+                                                value={editForm.discountPercentage || 0} 
+                                                onChange={(e) => setEditForm({...editForm, discountPercentage: parseFloat(e.target.value) || 0})} 
+                                            />
+                                        </div>
                                     </>
                                 ) : (
                                     <>
@@ -205,14 +230,18 @@ const SalesHistory: React.FC = () => {
                                     Since editForm updates local state, we can compute rough total for display. */}
                                 {isEditing && editForm ? (
                                     <div className="text-right">
-                                         <p className="text-xs text-gray-500 mb-1">Estimated New Total (before GST)</p>
+                                         <p className="text-xs text-gray-500 mb-1">Estimated New Total (before GST/Disc)</p>
                                          <p className="text-xl font-bold text-blue-600">₹{editForm.items.reduce((acc, i) => acc + (i.quantity * i.sellPrice), 0).toFixed(2)}</p>
+                                         <p className="text-xs text-gray-400">Final totals calculated on save.</p>
                                     </div>
                                 ) : (
                                     <>
                                         <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span> <span>₹{selectedSale.subTotal.toFixed(2)}</span></div>
                                         {selectedSale.gstAmount > 0 && (
                                             <div className="flex justify-between text-sm text-gray-600"><span>GST (18%)</span> <span>₹{selectedSale.gstAmount.toFixed(2)}</span></div>
+                                        )}
+                                        {selectedSale.discountAmount && selectedSale.discountAmount > 0 && (
+                                            <div className="flex justify-between text-sm text-red-600"><span>Discount ({selectedSale.discountPercentage}%)</span> <span>-₹{selectedSale.discountAmount.toFixed(2)}</span></div>
                                         )}
                                         <div className="flex justify-between text-lg font-bold text-teal-900 border-t border-dashed pt-2 mt-2"><span>Total Amount</span> <span>₹{selectedSale.totalAmount.toFixed(2)}</span></div>
                                     </>

@@ -26,6 +26,8 @@ export interface Sale {
   items: CartItem[];
   subTotal: number;
   gstAmount: number;
+  discountPercentage?: number; // New Field
+  discountAmount?: number;     // New Field
   totalAmount: number;
   totalProfit: number;
   timestamp: number;

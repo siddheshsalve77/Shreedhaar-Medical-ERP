@@ -13,7 +13,7 @@ interface AppContextType {
   updateProduct: (product: Product) => void;
   deleteProduct: (id: string) => void;
   addCategory: (category: string) => void;
-  processSale: (items: CartItem[], customerMobile?: string, customerName?: string, customerEmail?: string, includeGST?: boolean) => Sale;
+  processSale: (items: CartItem[], customerMobile?: string, customerName?: string, customerEmail?: string, includeGST?: boolean, discountPercentage?: number) => Sale;
   updateSale: (updatedSale: Sale) => void;
   deleteSale: (saleId: string) => void;
   resetSystem: () => void;
@@ -129,7 +129,8 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     customerMobile?: string,
     customerName?: string, 
     customerEmail?: string, 
-    includeGST: boolean = false
+    includeGST: boolean = false,
+    discountPercentage: number = 0
   ) => {
     let saleProfit = 0;
     let subTotal = 0;
@@ -150,16 +151,24 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
     setProducts(updatedProducts);
 
     const gstAmount = includeGST ? subTotal * 0.18 : 0;
-    const totalAmount = subTotal + gstAmount;
+    const grossTotal = subTotal + gstAmount;
+    
+    // Calculate Discount based on Gross Total
+    const discountAmount = (grossTotal * discountPercentage) / 100;
+    const finalTotal = grossTotal - discountAmount;
+    
+    // Adjust Profit: Subtract discount from profit since it reduces margin
+    saleProfit = saleProfit - discountAmount;
 
     const newSale: Sale = {
       id: Date.now().toString(),
-      items, subTotal, gstAmount, totalAmount, totalProfit: saleProfit,
+      items, subTotal, gstAmount, discountPercentage, discountAmount,
+      totalAmount: finalTotal, totalProfit: saleProfit,
       timestamp: Date.now(), customerName, customerEmail, customerMobile
     };
 
     setSales(prev => [newSale, ...prev]);
-    addNotification(`Bill generated. Total: ₹${totalAmount.toFixed(2)}`, 'info');
+    addNotification(`Bill generated. Total: ₹${finalTotal.toFixed(2)}`, 'info');
     return newSale;
   };
 
@@ -190,12 +199,20 @@ export const AppProvider = ({ children }: { children?: ReactNode }) => {
 
     const hasGST = oldSale.gstAmount > 0;
     const newGstAmount = hasGST ? newSubTotal * 0.18 : 0;
-    const newTotalAmount = newSubTotal + newGstAmount;
+    const grossTotal = newSubTotal + newGstAmount;
+    
+    // Recalculate Discount
+    const discPct = updatedSale.discountPercentage || 0;
+    const newDiscountAmount = (grossTotal * discPct) / 100;
+    const newTotalAmount = grossTotal - newDiscountAmount;
+    
+    newSaleProfit = newSaleProfit - newDiscountAmount;
 
     const finalSale: Sale = {
         ...updatedSale,
         subTotal: newSubTotal,
         gstAmount: newGstAmount,
+        discountAmount: newDiscountAmount,
         totalAmount: newTotalAmount,
         totalProfit: newSaleProfit
     };
